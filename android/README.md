@@ -4,7 +4,8 @@ X 앱 / 브라우저(x.com, twitter.com)에서 키워드가 들어간 게시물�
 
 ## 설치
 1. `XKeywordHider-debug.apk`를 폰으로 옮겨 실행 → "출처를 알 수 없는 앱 설치" 허용 → 설치.
-   (PC라면 `adb install -r XKeywordHider-debug.apk`. 예전 버전 위에 그대로 덮어 설치됩니다.)
+   (PC라면 `adb install -r XKeywordHider-debug.apk`.)
+   패키지 이름은 `com.jsw.xkhider`입니다. 1.1.1(`com.jsw.xkeywordhider`) 위에 업데이트되지 않으므로 새로 설치합니다. 이전 앱은 따로 지울 수 있습니다.
 2. 앱 열기 → 키워드 입력(한 줄에 하나, `/정규식/i` 가능) → **저장**.
    맨 위 빨간 BLOCKED 미리보기가 실제로 가려질 때 모습입니다.
 

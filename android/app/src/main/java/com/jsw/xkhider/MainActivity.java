@@ -1,4 +1,4 @@
-package com.jsw.xkeywordhider;
+package com.jsw.xkhider;
 
 import android.app.Activity;
 import android.content.ComponentName;

@@ -1,4 +1,4 @@
-package com.jsw.xkeywordhider;
+package com.jsw.xkhider;
 import java.text.Normalizer; import java.util.*; import java.util.regex.*;
 /** matcher.js 포팅: 줄마다 키워드, /정규식/플래그 지원, // 주석, 한글 사이 끼워넣기 무시. */
 public class Matcher {
