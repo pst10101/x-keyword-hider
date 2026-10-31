@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X 키워드 가리개",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "X(트위터)에서 지정한 키워드·계정이 들어간 게시물, 답글, 알림, 트렌드를 가려줍니다.",
   "permissions": [
     "storage",

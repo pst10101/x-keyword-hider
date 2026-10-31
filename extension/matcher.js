@@ -8,7 +8,7 @@
     checkAuthor: true,       // 작성자 이름·@아이디·재게시한 사람도 검사
     checkAlt: true,          // 이미지 설명(alt)도 검사
     checkOther: true,        // 알림·트렌드·추천 계정도 검사
-    showKeyword: true        // 가린 자리에 걸린 키워드 표시
+    showKeyword: false       // BLOCKED 아래에 걸린 키워드도 작게 표시 (기본은 BLOCKED만)
   };
 
   // 띄어쓰기·자주 끼워넣는 기호

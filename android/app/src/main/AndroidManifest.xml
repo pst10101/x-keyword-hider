@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+  <!-- 덮개는 접근성 오버레이(TYPE_ACCESSIBILITY_OVERLAY)라서 "다른 앱 위에 표시" 권한이 필요 없음 -->
   <application android:label="X 키워드 가리개" android:theme="@android:style/Theme.Material.Light">
     <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
       <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>

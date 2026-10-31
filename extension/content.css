@@ -33,3 +33,20 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+/* "걸린 키워드 표시"를 켰을 때: BLOCKED 아래 작은 줄 (한글이 나오도록 시스템 글꼴) */
+[data-xkh][data-xkh-kw]::before {
+  padding-bottom: 0;
+}
+
+[data-xkh][data-xkh-kw]::after {
+  content: attr(data-xkh-kw);
+  display: block;
+  padding: 0 16px 12px;
+  font: 500 13px/1.4 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+  color: rgb(113, 118, 123);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+}

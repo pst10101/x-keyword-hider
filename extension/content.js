@@ -61,33 +61,38 @@
     return s.length > 40 ? s.slice(0, 39) + "…" : s;
   }
 
-  function hide(el, hit, text, isTweet) {
+  function clearMarks(el) {
+    el.removeAttribute("data-xkh");
+    el.removeAttribute("data-xkh-label");
+    el.removeAttribute("data-xkh-kw");
+  }
+
+  function hide(el, hit, text) {
     hiddenKeys.add(text.slice(0, 300));
     const cell = el.closest(SEL_CELL);
     if (settings.mode === "remove" && cell) {
-      el.removeAttribute("data-xkh");
-      el.removeAttribute("data-xkh-label");
+      clearMarks(el);
       cell.setAttribute("data-xkh-gone", "");
     } else {
       if (cell) cell.removeAttribute("data-xkh-gone");
-      const label = "Blocked";
-      el.setAttribute("data-xkh-label", label);
+      el.setAttribute("data-xkh-label", "Blocked");
+      // "걸린 키워드 표시"를 켜면 BLOCKED 아래에 어떤 키워드에 걸렸는지 작게 보여줌
+      if (settings.showKeyword) el.setAttribute("data-xkh-kw", shorten(hit));
+      else el.removeAttribute("data-xkh-kw");
       el.setAttribute("data-xkh", "");
     }
     scheduleCount();
   }
 
   function unhide(el) {
-    el.removeAttribute("data-xkh");
-    el.removeAttribute("data-xkh-label");
+    clearMarks(el);
     const cell = el.closest(SEL_CELL);
     if (cell) cell.removeAttribute("data-xkh-gone");
   }
 
   function reveal(el) {
     revealed.set(el, lastText.get(el));
-    el.removeAttribute("data-xkh");
-    el.removeAttribute("data-xkh-label");
+    clearMarks(el);
   }
 
   function check(el) {
@@ -97,7 +102,7 @@
     lastText.set(el, text);
 
     const hit = settings.enabled && rules.length ? findMatch(rules, text) : null;
-    if (hit && revealed.get(el) !== text) hide(el, hit, text, isTweet);
+    if (hit && revealed.get(el) !== text) hide(el, hit, text);
     else unhide(el);
   }
 
@@ -113,10 +118,7 @@
   }
 
   function resetAll() {
-    document.querySelectorAll("[data-xkh]").forEach((el) => {
-      el.removeAttribute("data-xkh");
-      el.removeAttribute("data-xkh-label");
-    });
+    document.querySelectorAll("[data-xkh], [data-xkh-kw]").forEach(clearMarks);
     document.querySelectorAll("[data-xkh-gone]").forEach((el) => el.removeAttribute("data-xkh-gone"));
     lastText = new WeakMap();
     hiddenKeys.clear();
