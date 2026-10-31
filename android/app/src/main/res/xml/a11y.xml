@@ -1,5 +1,12 @@
+<!--
+  packageNames는 일부러 비워 둠(=모든 앱): 홈·다른 앱으로 넘어갈 때도 이벤트를 받아야 덮개를 바로 치울 수 있음.
+  대상 앱(X·브라우저·시계/알람) 거르기는 HiderService에서 문자열 비교 한 번으로 함.
+  flagRetrieveInteractiveWindows + typeWindowsChanged: X 안의 알림 배너·팝업·대화상자, 시계 앱의 알람 창처럼
+  본 화면과 따로 뜨는 창까지 훑고, 키보드·펼친 알림창 위로는 덮개가 올라가지 않게 함 (스캔 스레드에서만 씀).
+  notificationTimeout을 작게: 스크롤 시작을 빨리 알아채고, 실제 위치 추적은 서비스가 매 프레임 직접 함.
+-->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
   android:accessibilityEventTypes="typeWindowContentChanged|typeWindowStateChanged|typeViewScrolled|typeWindowsChanged"
-  android:accessibilityFeedbackType="feedbackGeneric" android:notificationTimeout="150"
+  android:accessibilityFeedbackType="feedbackGeneric" android:notificationTimeout="16"
   android:accessibilityFlags="flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
   android:canRetrieveWindowContent="true" android:isAccessibilityTool="true" android:description="@string/a11y_desc"/>

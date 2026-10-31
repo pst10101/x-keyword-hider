@@ -76,6 +76,7 @@ public class MainActivity extends Activity {
     CheckBox en = new CheckBox(this); en.setText("켜기"); en.setChecked(sp.getBoolean("enabled", true)); l.addView(en);
     CheckBox gap = new CheckBox(this); gap.setText("\"분 탕\", \"분.탕\"처럼 끼워넣어도 잡기"); gap.setChecked(sp.getBoolean("ignoreGaps", true)); l.addView(gap);
     l.addView(text("한 줄에 하나씩 · /정규식/i 가능 · // 로 시작하면 메모", 13, MUTED, false));
+    l.addView(text("X 앱·브라우저(x.com)의 게시물과, 시계·알람 앱의 알람 이름에서 가려요.", 13, MUTED, false));
     EditText kw = new EditText(this);
     kw.setMinLines(6);
     kw.setGravity(Gravity.TOP);
