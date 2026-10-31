@@ -33,9 +33,9 @@ X(트위터)에서 지정한 키워드가 들어간 글을 가리는 도구입�
 
 디버그 APK는 `android/XKeywordHider-debug.apk` 입니다.
 
-1. APK를 폰으로 옮겨 실행합니다. “출처를 알 수 없는 앱” 설치를 허용한 뒤 설치합니다. PC에서는 `adb install -r android/XKeywordHider-debug.apk` 입니다. 1.1.2의 패키지 이름은 `com.jsw.xkhider`라서 1.1.1(`com.jsw.xkeywordhider`) 위에 업데이트되지 않습니다. 새로 설치하고, 이전 앱은 따로 지울 수 있습니다.
+1. APK를 폰으로 옮겨 실행합니다. “출처를 알 수 없는 앱” 설치를 허용한 뒤 설치합니다. PC에서는 `adb install -r android/XKeywordHider-debug.apk` 입니다. 패키지 이름은 `com.jsw.xkhider`입니다. 1.1.2 위에는 덮어 설치되고, 1.1.1(`com.jsw.xkeywordhider`) 위에는 업데이트되지 않습니다. 이전 앱은 따로 지울 수 있습니다.
 2. 앱을 열고 키워드를 한 줄에 하나씩 입력한 다음 **저장**을 누릅니다. `/정규식/i`와 `//` 주석도 됩니다. 맨 위 빨간 BLOCKED 미리보기가 실제로 가려질 때 모습입니다.
-3. **접근성 서비스**를 켭니다. “접근성 서비스 켜기” → 설치된 앱(삼성: 설치된 앱 / 다운로드한 앱) → X 키워드 가리개 → 사용. 앱으로 돌아오면 “접근성 서비스 켜짐”이 보입니다. 안드로이드 13 이상에서 제한된 설정으로 막히면, 설정 → 애플리케이션 → X 키워드 가리개 → 오른쪽 위 ⋮ → **제한된 설정 허용** 후 다시 켭니다.
+3. **접근성 서비스**를 켭니다. 앱에 제한된 설정 안내가 있습니다. “② 접근성 설정 열기”로 들어간 뒤, 거부되면 “① 앱 정보 열기” → 오른쪽 위 ⋮ → **제한된 설정 허용** 후 다시 켭니다. 앱이 이 제한을 스스로 풀 수는 없습니다. 앱으로 돌아오면 “접근성 서비스 켜짐”이 보입니다.
 
 “다른 앱 위에 표시” 권한은 필요 없습니다. 덮개는 접근성 오버레이로 뜹니다.
 
@@ -62,6 +62,6 @@ OFL 조건으로 사용·재배포할 수 있습니다. 글꼴 자체의 예약�
 
 X Keyword Hider covers posts that match your keywords. The Chrome extension in `extension/` is loaded unpacked (developer mode) and replaces a hit with a large red **BLOCKED** label in Bebas Neue. Put one keyword per line, for example `ㅋㅋ`.
 
-The Android debug APK is `android/XKeywordHider-debug.apk` (package `com.jsw.xkhider`). Install it fresh — it does not update 1.1.1 (`com.jsw.xkeywordhider`) — save keywords, then turn on its accessibility service (no draw-over-other-apps permission is needed). Play Protect may still warn. On the X app or a browser open to x.com, matching posts get a red BLOCKED overlay that does not pass taps through; swiping up or down on it pages the list.
+The Android debug APK is `android/XKeywordHider-debug.apk` (package `com.jsw.xkhider`). It updates 1.1.2 in place and does not update 1.1.1 (`com.jsw.xkeywordhider`). Install it, save keywords, then turn on its accessibility service (no draw-over-other-apps permission is needed). Samsung and Android restricted settings cannot be lifted by the app; the in-app steps show how to allow them. Play Protect may still warn. On the X app or a browser open to x.com, matching posts get a red BLOCKED overlay that does not pass taps through; swiping up or down on it pages the list.
 
 Bebas Neue is bundled under the SIL Open Font License 1.1.
