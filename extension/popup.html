@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>X 키워드 가리개</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="wrap">
+    <header class="top">
+      <img class="logo" src="icons/icon48.png" alt="">
+      <div class="title">
+        <h1>X 키워드 가리개</h1>
+        <p id="stat" class="muted">불러오는 중…</p>
+      </div>
+      <label class="switch" title="켜기/끄기">
+        <input type="checkbox" id="enabled">
+        <span class="track"><span class="thumb"></span></span>
+      </label>
+    </header>
+
+    <section>
+      <div class="row-head">
+        <label for="keywords" class="label">가릴 키워드</label>
+        <span id="ruleCount" class="muted small"></span>
+      </div>
+      <textarea id="keywords" rows="9" spellcheck="false"
+        placeholder="한 줄에 하나씩&#10;분탕&#10;@계정아이디&#10;#해시태그&#10;/정규식/i&#10;// 이렇게 쓰면 메모"></textarea>
+      <p class="hint">한 줄에 하나 · <b>@아이디</b> = 그 계정 · <b>/정규식/i</b> · <b>//</b> = 메모<br>
+        영어는 단어 단위로 맞춰요 (ai는 said에 안 걸림)</p>
+      <ul id="errors" class="errors"></ul>
+    </section>
+
+    <section>
+      <span class="label">가리는 방식</span>
+      <div class="seg" role="radiogroup">
+        <label><input type="radio" name="mode" value="collapse"><span>접어두기<small>눌러서 보기</small></span></label>
+        <label><input type="radio" name="mode" value="remove"><span>완전히 숨기기<small>흔적 없이</small></span></label>
+      </div>
+      <label class="check" id="showKeywordRow">
+        <input type="checkbox" id="showKeyword">
+        <span>접힌 자리에 걸린 키워드 표시</span>
+      </label>
+    </section>
+
+    <section>
+      <span class="label">검사 범위</span>
+      <label class="check">
+        <input type="checkbox" id="ignoreGaps">
+        <span>띄어쓰기·기호 끼워넣어도 잡기 <em>분 탕, 분.탕</em></span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="checkAuthor">
+        <span>작성자 이름·@아이디·재게시한 사람</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="checkAlt">
+        <span>이미지 설명(alt)</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="checkOther">
+        <span>알림·트렌드·추천 계정</span>
+      </label>
+    </section>
+
+    <footer>
+      <span class="muted small">X에서 글자나 링크를 우클릭해도 추가돼요</span>
+      <span id="saved" class="saved">저장됨</span>
+    </footer>
+  </main>
+  <script src="matcher.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
