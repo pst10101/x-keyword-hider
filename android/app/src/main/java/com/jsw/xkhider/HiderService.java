@@ -3,6 +3,7 @@ package com.jsw.xkhider;
 import android.accessibilityservice.AccessibilityService;
 import android.content.SharedPreferences;
 import android.graphics.PixelFormat;
+import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.os.Build;
@@ -24,8 +25,11 @@ import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -34,11 +38,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * X 앱·브라우저(x.com)와 시계·알람 앱 화면을 읽어서, 키워드가 걸린 곳 위에 빨간 BLOCKED(Bebas Neue) 덮개를 띄웁니다.
  * 그 앱의 화면에 떠 있는 모든 창(본 화면, 알림 탭, 배너·팝업·대화상자)을 훑습니다.
  *
- * 속도 구조 (1.1.5):
+ * 구조 (1.1.6):
  *  - xkh-scan 스레드: 화면 트리를 훑어 키워드가 걸린 노드를 찾음 (무거운 일, 스크롤 중 ~90ms 간격).
- *  - xkh-track 스레드: 이미 찾은 노드의 위치만 매 프레임(Choreographer) 다시 읽음 (노드당 IPC 1번).
- *    다음 프레임까지 움직일 만큼 살짝 앞서 그려서 지연을 줄임.
- *  - 메인 스레드: 바뀐 덮개만 updateViewLayout. 덮개 창은 재사용.
+ *  - xkh-track 스레드: 이미 찾은 노드의 실제 위치를 매 프레임(Choreographer) 다시 읽음 (노드당 IPC 1번). 예측 없음.
+ *  - 메인 스레드: 노드 하나에 덮개 창 하나. 그 노드를 덮는 동안 같은 창이 따라가고, 덮을 곳이 없어지면 바로 없앰.
  */
 public class HiderService extends AccessibilityService {
   static final String X_APP = "com.twitter.android";
@@ -62,28 +65,50 @@ public class HiderService extends AccessibilityService {
   static final long SCAN_GAP_ACTIVE = 90;   // 스크롤 중 새로 나타난 글 찾는 간격
   static final long SCAN_GAP_IDLE = 220;    // 내용만 바뀔 때(동영상 등) 다시 찾는 간격
   static final long VERIFY_MS = 150;        // 덮은 글이 그대로인지(목록 재활용) 다시 확인하는 간격
-  static final float LEAD_MS = 14f;         // 다음 화면 갱신까지 미리 움직여 둘 시간
+  static final int JUMP_DP = 120;           // 한 프레임에 이보다 멀리 뛰면 목록이 칸을 재활용했을 수 있어 바로 확인
+  static final int MAX_MISSES = 2;          // 스캔이 이만큼 연달아 못 찾아도 실제로 그 자리에 있으면 유지 (스캔 중 트리가 잠깐 비어도 안 깜빡이게)
+  static final int MAX_UP = 12, MAX_UP_X = 40; // 목록을 찾아 부모로 올라가는 한도 (브라우저는 문서 전체가 한 칸으로 잡히지 않게 낮게 둠)
 
   /** 덮개 하나가 따라가는 대상 */
   static final class Track {
     final AccessibilityNodeInfo item;    // 덮을 노드 (X: 게시물 한 칸, 시계: 글자 노드)
-    final AccessibilityNodeInfo anchor;  // 키워드가 실제로 들어 있는 노드 (재활용 확인용)
-    final AccessibilityNodeInfo list;    // 스크롤 목록 (덮개 위에서 쓸어 넘길 때), 없으면 null
-    final Rect clip;                     // 목록 영역 (미리 움직인 덮개가 목록 밖으로 안 나가게), 없으면 null
+    final boolean cell;                  // item이 스크롤 목록의 한 칸 전체인지
     final int pad;
+    AccessibilityNodeInfo anchor;        // 키워드가 실제로 들어 있는 노드 (재활용 확인용)
+    AccessibilityNodeInfo list;          // 스크롤 목록 (덮개 위에서 쓸어 넘길 때), 없으면 null
     List<Rect> occ = Collections.emptyList(); // 이 창보다 위에 떠 있는 창들 (덮개가 그 위를 가리지 않게)
-    final Rect r = new Rect();           // 마지막으로 읽은 위치
-    long t, verifiedAt;
-    float vTop, vBottom;                 // 위·아래 변의 속도 (px/ms)
-    Track(AccessibilityNodeInfo item, AccessibilityNodeInfo anchor, AccessibilityNodeInfo list, Rect clip, int pad) {
-      this.item = item; this.anchor = anchor; this.list = list; this.clip = clip; this.pad = pad;
+    final Rect r = new Rect();           // 마지막으로 읽은 실제 위치
+    long id, verifiedAt;                 // id: 덮개 창을 이어 가는 열쇠
+    int misses;                          // 스캔이 연달아 못 찾은 횟수
+    Track(AccessibilityNodeInfo item, AccessibilityNodeInfo anchor, AccessibilityNodeInfo list, boolean cell, int pad) {
+      this.item = item; this.anchor = anchor; this.list = list; this.cell = cell; this.pad = pad;
     }
   }
 
-  /** 메인 스레드에 넘기는 한 장면 */
-  static final class Scene {
-    final List<Rect> rs; final List<AccessibilityNodeInfo> ls;
-    Scene(List<Rect> rs, List<AccessibilityNodeInfo> ls) { this.rs = rs; this.ls = ls; }
+  /** 합치고 자르기 전의 덮개 자리 */
+  static final class Box {
+    final long id; final int win; final boolean cell; final Rect r;
+    final AccessibilityNodeInfo list; final List<Rect> occ;
+    Box(long id, int win, boolean cell, Rect r, AccessibilityNodeInfo list, List<Rect> occ) {
+      this.id = id; this.win = win; this.cell = cell; this.r = r; this.list = list; this.occ = occ;
+    }
+  }
+
+  /** 메인 스레드에 넘기는 덮개 한 장. key가 같으면 같은 창이 따라감 */
+  static final class Cover {
+    final long key; final Rect r; final AccessibilityNodeInfo list;
+    Cover(long key, Rect r, AccessibilityNodeInfo list) { this.key = key; this.r = r; this.list = list; }
+    @Override public boolean equals(Object o) {
+      return o instanceof Cover && key == ((Cover) o).key && r.equals(((Cover) o).r);
+    }
+    @Override public int hashCode() { return Long.hashCode(key); }
+  }
+
+  /** 화면에 떠 있는 덮개 창 */
+  static final class Shown {
+    TextView v;
+    final Rect r = new Rect();
+    AccessibilityNodeInfo list;
   }
 
   final Handler main = new Handler(Looper.getMainLooper());
@@ -98,7 +123,7 @@ public class HiderService extends AccessibilityService {
   volatile boolean targetOnScreen;   // 마지막 스캔 때 X·시계 창이 화면에 있었는지
   final AtomicBoolean scanQueued = new AtomicBoolean();
   final AtomicBoolean pokeQueued = new AtomicBoolean();
-  final AtomicReference<Scene> pendingScene = new AtomicReference<>();
+  final AtomicReference<List<Cover>> pendingScene = new AtomicReference<>();
 
   // xkh-scan 스레드 전용
   String lastKw; boolean lastGap;
@@ -106,14 +131,13 @@ public class HiderService extends AccessibilityService {
   // xkh-track 스레드 전용
   Choreographer choreo;
   List<Track> tracks = new ArrayList<>();
-  List<Rect> published = new ArrayList<>();
+  List<Cover> published = new ArrayList<>();
   boolean frameOn;
-  long lastMoveAt;
+  long lastMoveAt, nextId;
 
   // 메인 스레드 전용
-  final List<TextView> views = new ArrayList<>();
-  final List<Rect> viewRects = new ArrayList<>();
-  List<AccessibilityNodeInfo> viewLists = new ArrayList<>();
+  final Map<Long, Shown> shown = new HashMap<>();
+  boolean dead;
 
   @Override protected void onServiceConnected() {
     wm = (WindowManager) getSystemService(WINDOW_SERVICE);
@@ -142,12 +166,12 @@ public class HiderService extends AccessibilityService {
     int type = e.getEventType();
     if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
       // 배너·팝업·키보드·알림창이 뜨고 질 때. 대상 앱이 화면에 있을 때만 다시 훑음
-      if (targetOnScreen || !views.isEmpty()) requestScan(SCAN_GAP_ACTIVE);
+      if (targetOnScreen || !shown.isEmpty()) { poke(); requestScan(SCAN_GAP_ACTIVE); }
       return;
     }
     if (!(X_APP.equals(pkg) || BROWSERS.contains(pkg) || CLOCKS.contains(pkg))) {
       // 다른 앱·홈·알림창으로 넘어가면 바로 다시 확인해서 덮개를 치움
-      if (!views.isEmpty() && type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) requestScanNow();
+      if (!shown.isEmpty() && type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) requestScanNow();
       return;
     }
     long now = SystemClock.uptimeMillis();
@@ -166,6 +190,7 @@ public class HiderService extends AccessibilityService {
   @Override public void onInterrupt() {}
 
   @Override public void onDestroy() {
+    dead = true;   // 트래킹 스레드가 뒤늦게 보낸 장면이 창을 다시 만들지 않게
     main.removeCallbacksAndMessages(null);
     if (scanThread != null) scanThread.quitSafely();
     if (trackThread != null) trackThread.quitSafely();
@@ -237,10 +262,11 @@ public class HiderService extends AccessibilityService {
         int mode = modeOf(root);
         if (mode != MODE_NONE) { target = true; if (mt != null) walk(mode, root, mt, found); }
       }
-    } catch (Exception ignored) {}
+    } catch (Exception e) { target = targetOnScreen; }
     targetOnScreen = target;
     final List<Track> next = found;
-    if (trackH != null) trackH.post(() -> adopt(next));
+    final boolean seen = target;
+    if (trackH != null) trackH.post(() -> adopt(next, seen));
   }
 
   static final int MODE_NONE = 0, MODE_X = 1, MODE_CLOCK = 2;
@@ -254,7 +280,7 @@ public class HiderService extends AccessibilityService {
   }
 
   void walk(int mode, AccessibilityNodeInfo root, Matcher mt, List<Track> out) {
-    if (mode == MODE_X) walkX(root, mt, out, 0); else walkClock(root, mt, out, 0);
+    if (mode == MODE_X) walkX(root, mt, out, 0, false, false); else walkClock(root, mt, out, 0);
   }
 
   /**
@@ -287,14 +313,30 @@ public class HiderService extends AccessibilityService {
     return false;
   }
 
-  /** X: 키워드가 걸린 글이 들어 있는 게시물 한 칸 전체를 덮음 */
-  void walkX(AccessibilityNodeInfo n, Matcher mt, List<Track> out, int d) {
-    if (n == null || d > 60 || !n.isVisibleToUser()) return;
+  /**
+   * X: 키워드가 걸린 글이 들어 있는 게시물 한 칸 전체를 덮음.
+   * X 앱에서는 칸이 조금이라도 보이면 그 안을 전부 검사함. 글은 화면 밖으로 나가고 이미지만 남은 게시물도 덮어야 하니까.
+   * inList: 부모가 세로 목록 (이 노드가 한 칸), inCell: 보이는 칸의 안쪽.
+   */
+  void walkX(AccessibilityNodeInfo n, Matcher mt, List<Track> out, int d, boolean inList, boolean inCell) {
+    if (n == null || d > 60 || (!inCell && !n.isVisibleToUser())) return;
     if (mt.matches(n.getText()) || mt.matches(n.getContentDescription())) {
       Track t = trackFor(n, true);
       if (t != null) { add(out, t); return; }
     }
-    for (int i = 0; i < n.getChildCount(); i++) walkX(n.getChild(i), mt, out, d + 1);
+    boolean cells = inCell || inList;
+    boolean isList = isXApp(n) && n.isScrollable() && n.getCollectionInfo() != null && !sideways(n);
+    for (int i = 0; i < n.getChildCount(); i++) walkX(n.getChild(i), mt, out, d + 1, isList, cells);
+  }
+
+  static boolean isXApp(AccessibilityNodeInfo n) { return X_APP.equals(String.valueOf(n.getPackageName())); }
+
+  /** 가로로 넘기는 목록인지 (탭 ViewPager, 게시물 안의 이미지·카드 캐러셀). 게시물 칸을 찾을 때는 건너뜀 */
+  static boolean sideways(AccessibilityNodeInfo p) {
+    CharSequence cn = p.getClassName();
+    if (cn != null && (cn.toString().contains("HorizontalScrollView") || cn.toString().contains("ViewPager"))) return true;
+    AccessibilityNodeInfo.CollectionInfo ci = p.getCollectionInfo();
+    return ci != null && ci.getRowCount() == 1 && ci.getColumnCount() != 1;
   }
 
   /** 시계·알람: 키워드가 든 글자 노드만 덮음. 글자가 없고 설명(contentDescription)에만 있으면 그 칸을 덮음 */
@@ -313,25 +355,22 @@ public class HiderService extends AccessibilityService {
     }
   }
 
-  /** wholeItem=true면 스크롤 목록의 바로 아래 자식(=게시물 한 칸)을 덮고, false면 그 노드만 덮음 */
+  /** wholeItem=true면 세로 스크롤 목록의 바로 아래 자식(=게시물 한 칸)을 덮고, false면 그 노드만 덮음 */
   Track trackFor(AccessibilityNodeInfo n, boolean wholeItem) {
+    int up = isXApp(n) ? MAX_UP_X : MAX_UP;
     AccessibilityNodeInfo c = n, list = null;
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < up; i++) {
       AccessibilityNodeInfo p = c.getParent();
       if (p == null) break;
-      if (p.isScrollable()) { list = p; break; }
+      if (p.isScrollable() && !sideways(p)) { list = p; break; }
       c = p;
     }
-    AccessibilityNodeInfo item = (wholeItem && list != null) ? c : n;
+    boolean cell = wholeItem && list != null;
+    AccessibilityNodeInfo item = cell ? c : n;
     Rect r = new Rect();
     item.getBoundsInScreen(r);   // 화면에 보이는 부분만 (위쪽 부모들에 잘린 크기)
     if (r.isEmpty()) return null;
-    Rect clip = null;
-    if (list != null) { clip = new Rect(); list.getBoundsInScreen(clip); if (clip.isEmpty()) clip = null; }
-    Track t = new Track(item, n, list, clip, wholeItem ? 0 : dp(2));
-    t.r.set(r);
-    t.t = t.verifiedAt = SystemClock.uptimeMillis();
-    return t;
+    return new Track(item, n, list, cell, wholeItem ? 0 : dp(2));
   }
 
   static void add(List<Track> out, Track t) {
@@ -344,16 +383,51 @@ public class HiderService extends AccessibilityService {
   final Choreographer.FrameCallback frameCb = this::onFrame;
   final Runnable idlePoll = this::wake;
 
-  void adopt(List<Track> next) {
-    // 같은 노드를 계속 덮고 있으면 속도를 이어받아 부드럽게
-    for (Track n : next) {
-      for (Track o : tracks) {
-        if (o.item.equals(n.item)) { n.vTop = o.vTop; n.vBottom = o.vBottom; break; }
+  /**
+   * 스캔 결과 반영. 이미 덮던 노드는 같은 덮개로 이어 가고, 새 노드는 지금 실제 위치를 읽어 확인한 뒤에만 덮음.
+   * (스캔 결과의 위치·글자는 스캔하는 사이에 낡았을 수 있어서 그대로 쓰면 덮개가 뒤로 튐)
+   */
+  void adopt(List<Track> found, boolean target) {
+    long now = SystemClock.uptimeMillis();
+    Rect nr = new Rect();
+    List<Track> next = new ArrayList<>();
+    for (Track o : tracks) {
+      Track n = take(found, o.item);
+      if (n != null) {
+        o.anchor = n.anchor; o.list = n.list; o.occ = n.occ; o.misses = 0;
+        next.add(o);
+      } else if (target && ++o.misses <= MAX_MISSES && read(o, nr) && verify(o)) {
+        o.r.set(nr);
+        o.verifiedAt = now;
+        next.add(o);
       }
+    }
+    for (Track n : found) {
+      if (!read(n, nr) || !verify(n)) continue;
+      n.r.set(nr);
+      n.verifiedAt = now;
+      n.id = ++nextId;
+      addUnlessInside(next, n);
     }
     tracks = next;
     publish();
     wake();
+  }
+
+  static Track take(List<Track> found, AccessibilityNodeInfo item) {
+    for (int i = 0; i < found.size(); i++) if (found.get(i).item.equals(item)) return found.remove(i);
+    return null;
+  }
+
+  /** 같은 창에서 이미 덮은 자리의 안쪽이면 덮개를 또 만들지 않음. 새 자리가 더 크면 안쪽 것을 빼고 하나만 */
+  static void addUnlessInside(List<Track> ts, Track n) {
+    for (int i = ts.size() - 1; i >= 0; i--) {
+      Track k = ts.get(i);
+      if (k.item.getWindowId() != n.item.getWindowId()) continue;
+      if (k.r.contains(n.r)) return;
+      if (n.r.contains(k.r)) ts.remove(i);
+    }
+    ts.add(n);
   }
 
   void wake() {
@@ -378,35 +452,30 @@ public class HiderService extends AccessibilityService {
     }
   }
 
+  /** 노드의 지금 실제 위치를 읽음. 사라졌거나 안 보이면 false */
+  boolean read(Track t, Rect out) {
+    try {
+      if (!t.item.refresh()) return false;
+      t.item.getBoundsInScreen(out);
+      return !out.isEmpty() && t.item.isVisibleToUser();
+    } catch (Exception e) { return false; }
+  }
+
   /** 덮고 있는 노드들의 현재 위치만 다시 읽음. 하나라도 움직였으면 true */
   boolean refreshAll(long now) {
     boolean moved = false, lost = false;
     Rect nr = new Rect();
+    int jump = dp(JUMP_DP);
     for (int i = tracks.size() - 1; i >= 0; i--) {
       Track t = tracks.get(i);
-      boolean ok;
-      try { ok = t.item.refresh(); } catch (Exception e) { ok = false; }
+      boolean ok = read(t, nr);
       if (ok) {
-        t.item.getBoundsInScreen(nr);
-        ok = !nr.isEmpty() && t.item.isVisibleToUser();
-      }
-      if (ok) {
-        // 한 번에 너무 멀리 뛰었으면 목록이 이 칸을 다른 글로 재활용했을 수 있으니 바로 확인
-        boolean jumped = Math.abs(nr.top - t.r.top) > Math.max(dp(160), t.r.height());
+        // 한 번에 멀리 뛰었으면 목록이 이 칸을 다른 글로 재활용했을 수 있으니 옮기기 전에 바로 확인
+        boolean jumped = Math.abs(nr.top - t.r.top) > jump || Math.abs(nr.bottom - t.r.bottom) > jump;
         if (jumped || now - t.verifiedAt >= VERIFY_MS) { ok = verify(t); t.verifiedAt = now; }
       }
       if (!ok) { tracks.remove(i); lost = true; continue; }
-      float dt = Math.max(1, now - t.t);
-      if (!nr.equals(t.r)) {
-        moved = true;
-        t.vTop = 0.5f * t.vTop + 0.5f * ((nr.top - t.r.top) / dt);
-        t.vBottom = 0.5f * t.vBottom + 0.5f * ((nr.bottom - t.r.bottom) / dt);
-      } else {
-        t.vTop *= 0.5f;
-        t.vBottom *= 0.5f;
-      }
-      t.r.set(nr);
-      t.t = now;
+      if (!nr.equals(t.r)) { moved = true; t.r.set(nr); }
     }
     if (lost) requestScan(0);
     return moved;
@@ -422,50 +491,47 @@ public class HiderService extends AccessibilityService {
     } catch (Exception e) { return false; }
   }
 
-  /** 현재 위치(+다음 프레임까지 예상 이동)를 덮개 사각형으로 만들어 메인 스레드로 보냄 */
+  /** 지금 읽은 실제 위치를 덮개로 만들어 메인 스레드로 보냄 */
   void publish() {
-    List<Rect> raw = new ArrayList<>();
-    List<AccessibilityNodeInfo> rawLists = new ArrayList<>();
-    List<List<Rect>> rawOcc = new ArrayList<>();
-    int cap = dp(32);
+    Point size = new Point();
+    wm.getDefaultDisplay().getRealSize(size);
+    Rect screen = new Rect(0, 0, size.x, size.y);
+    List<Box> boxes = new ArrayList<>();
     for (Track t : tracks) {
       Rect r = new Rect(t.r);
-      r.top += clamp(Math.round(t.vTop * LEAD_MS), cap);       // 잘려서 멈춰 있는 변은 속도 0이라 그대로
-      r.bottom += clamp(Math.round(t.vBottom * LEAD_MS), cap);
       if (t.pad > 0) r.inset(-t.pad, -t.pad);
-      if (t.clip != null && !r.intersect(t.clip)) continue;
-      if (r.isEmpty()) continue;
-      merge(raw, rawLists, rawOcc, r, t.list, t.occ);
+      if (!r.intersect(screen)) continue;    // 화면 밖에는 덮개를 띄우지 않음
+      Box b = new Box(t.id, t.item.getWindowId(), t.cell, r, t.list, t.occ);
+      if (t.cell) boxes.add(b); else merge(boxes, b);
     }
-    List<Rect> rs = new ArrayList<>();
-    List<AccessibilityNodeInfo> ls = new ArrayList<>();
+    List<Cover> covers = new ArrayList<>();
     int min = dp(10);
-    for (int i = 0; i < raw.size(); i++) {
-      for (Rect piece : cut(raw.get(i), rawOcc.get(i), min)) { rs.add(piece); ls.add(rawLists.get(i)); }
+    for (Box b : boxes) {
+      long piece = 0;
+      for (Rect r : cut(b.r, b.occ, min)) covers.add(new Cover(b.id << 16 | piece++, r, b.list));
     }
-    if (rs.equals(published)) return;
-    published = rs;
-    if (pendingScene.getAndSet(new Scene(rs, ls)) == null) main.postAtFrontOfQueue(renderRunnable);
+    if (covers.equals(published)) return;
+    published = covers;
+    if (pendingScene.getAndSet(covers) == null) main.postAtFrontOfQueue(renderRunnable);
   }
 
-  /** 겹치는 덮개는 하나로 합침 (시계 앱에서 글자끼리 겹칠 때, X에서 배너와 글이 겹칠 때 등) */
-  static void merge(List<Rect> rs, List<AccessibilityNodeInfo> ls, List<List<Rect>> occs,
-                    Rect r, AccessibilityNodeInfo list, List<Rect> occ) {
-    for (int i = 0; i < rs.size(); i++) {
-      if (Rect.intersects(rs.get(i), r)) {
-        Rect u = rs.remove(i);
-        AccessibilityNodeInfo l = ls.remove(i);
-        List<Rect> o = occs.remove(i);
-        u.union(r);
-        List<Rect> both = o;
-        if (!occ.isEmpty()) { both = new ArrayList<>(o); both.addAll(occ); }
-        merge(rs, ls, occs, u, l != null ? l : list, both);
-        return;
-      }
+  /**
+   * 같은 창에서 겹치는 글자 덮개는 하나로 합침 (시계 앱에서 글자끼리 겹칠 때 등).
+   * 게시물 칸은 합치지 않음: 칸끼리는 원래 안 겹치고, 위치를 읽는 시점 차이로 잠깐 겹쳐 보일 때 합치면 덮개 창이 늘었다 줄었다 함.
+   */
+  static void merge(List<Box> bs, Box b) {
+    for (int i = 0; i < bs.size(); i++) {
+      Box o = bs.get(i);
+      if (o.cell || o.win != b.win || !Rect.intersects(o.r, b.r)) continue;
+      bs.remove(i);
+      Rect u = new Rect(o.r);
+      u.union(b.r);
+      List<Rect> both = o.occ;
+      if (!b.occ.isEmpty()) { both = new ArrayList<>(o.occ); both.addAll(b.occ); }
+      merge(bs, new Box(Math.min(o.id, b.id), o.win, false, u, o.list != null ? o.list : b.list, both));
+      return;
     }
-    rs.add(r);
-    ls.add(list);
-    occs.add(occ);
+    bs.add(b);
   }
 
   /** 덮개에서 위에 떠 있는 창 영역을 잘라 냄 (최대 4조각). 너무 작은 조각은 버림 */
@@ -491,49 +557,56 @@ public class HiderService extends AccessibilityService {
     if (r.width() >= min && r.height() >= min) out.add(r);
   }
 
-  static int clamp(int v, int cap) { return Math.max(-cap, Math.min(cap, v)); }
-
   // ===================== 그리기 (메인 스레드) =====================
 
   final Runnable renderRunnable = () -> {
-    Scene s = pendingScene.getAndSet(null);
-    if (s != null) render(s.rs, s.ls);
+    List<Cover> cs = pendingScene.getAndSet(null);
+    if (cs != null) render(cs);
   };
 
-  /** 덮개 창은 재사용하고, 위치·크기가 바뀐 것만 옮김 */
-  void render(List<Rect> rs, List<AccessibilityNodeInfo> ls) {
-    if (wm == null) return;
-    viewLists = ls;
-    while (views.size() > rs.size()) {
-      TextView v = views.remove(views.size() - 1);
-      viewRects.remove(viewRects.size() - 1);
-      try { wm.removeView(v); } catch (Exception ignored) {}
+  /** 장면에 없는 덮개 창은 먼저 바로 없애고, 남은 창은 자기 노드를 따라 옮기고, 새 노드에만 새 창을 만듦 */
+  void render(List<Cover> covers) {
+    if (wm == null || dead) return;
+    Set<Long> keep = new HashSet<>();
+    for (Cover c : covers) keep.add(c.key);
+    for (Iterator<Map.Entry<Long, Shown>> it = shown.entrySet().iterator(); it.hasNext();) {
+      Map.Entry<Long, Shown> e = it.next();
+      if (!keep.contains(e.getKey())) { destroy(e.getValue()); it.remove(); }
     }
-    for (int i = 0; i < rs.size(); i++) {
-      Rect r = rs.get(i);
-      if (i < views.size()) {
-        if (r.equals(viewRects.get(i))) continue;
-        TextView v = views.get(i);
+    for (Cover c : covers) {
+      Shown s = shown.get(c.key);
+      if (s != null) {
+        s.list = c.list;
+        if (c.r.equals(s.r)) continue;
         try {
-          WindowManager.LayoutParams lp = (WindowManager.LayoutParams) v.getLayoutParams();
-          place(lp, r);
-          fitPadding(v, r);
-          wm.updateViewLayout(v, lp);
-          viewRects.get(i).set(r);
-        } catch (Exception ignored) {}
-      } else {
-        TextView tv = makeCover(i);
-        fitPadding(tv, r);
-        try { wm.addView(tv, params(r)); views.add(tv); viewRects.add(new Rect(r)); } catch (Exception e) { break; }
+          WindowManager.LayoutParams lp = (WindowManager.LayoutParams) s.v.getLayoutParams();
+          place(lp, c.r);
+          fitPadding(s.v, c.r);
+          wm.updateViewLayout(s.v, lp);
+          s.r.set(c.r);
+          continue;
+        } catch (Exception e) {
+          destroy(s);   // 옮길 수 없는 창은 남겨 두지 않고 새로 만듦
+          shown.remove(c.key);
+        }
       }
+      s = new Shown();
+      s.list = c.list;
+      s.r.set(c.r);
+      s.v = makeCover(s);
+      fitPadding(s.v, c.r);
+      try { wm.addView(s.v, params(c.r)); shown.put(c.key, s); } catch (Exception e) { break; }
     }
   }
 
+  /** 다음 화면 갱신을 기다리지 않고 바로 없앰 (창 닫힘 애니메이션도 없음) */
+  void destroy(Shown s) {
+    try { wm.removeViewImmediate(s.v); } catch (Exception ignored) {}
+  }
+
   void clearViews() {
-    if (wm != null) for (View v : views) try { wm.removeView(v); } catch (Exception ignored) {}
-    views.clear();
-    viewRects.clear();
-    viewLists = new ArrayList<>();
+    if (wm != null) for (Shown s : shown.values()) destroy(s);
+    shown.clear();
   }
 
   WindowManager.LayoutParams params(Rect r) {
@@ -563,7 +636,7 @@ public class HiderService extends AccessibilityService {
   }
 
   /** 빨간 BLOCKED(Bebas Neue). 글자 크기는 덮개 크기에 맞춰 자동으로 키우고 줄임 */
-  TextView makeCover(final int idx) {
+  TextView makeCover(final Shown s) {
     TextView tv = new TextView(this);
     tv.setText(LABEL);
     tv.setTypeface(bebas);
@@ -582,7 +655,7 @@ public class HiderService extends AccessibilityService {
         if (a == MotionEvent.ACTION_DOWN) { x0 = ev.getRawX(); y0 = ev.getRawY(); }
         else if (a == MotionEvent.ACTION_UP) {
           float dx = ev.getRawX() - x0, dy = ev.getRawY() - y0;
-          if (Math.abs(dy) > dp(40) && Math.abs(dy) > Math.abs(dx)) page(idx, dy < 0);
+          if (Math.abs(dy) > dp(40) && Math.abs(dy) > Math.abs(dx)) page(s.list, dy < 0);
         }
         return true;
       }
@@ -590,10 +663,7 @@ public class HiderService extends AccessibilityService {
     return tv;
   }
 
-  void page(int idx, boolean forward) {
-    List<AccessibilityNodeInfo> ls = viewLists;
-    if (idx >= ls.size()) return;
-    AccessibilityNodeInfo list = ls.get(idx);
+  void page(AccessibilityNodeInfo list, boolean forward) {
     if (list == null) return;
     try {
       list.refresh();
